@@ -6,4 +6,6 @@ set(CMAKE_C_STANDARD 11)
 include_directories(.)
 
 add_executable(cuckoo cuckoo.c)
-target_link_libraries( cuckoo config )
+
+install( TARGETS cuckoo RUNTIME
+         DESTINATION /usr/bin )
