@@ -17,6 +17,13 @@
 #include <linux/limits.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <stdbool.h>
+
+typedef struct {
+    char * path;
+    char * directory;
+    char * name;
+} tSplitPath;
 
 void usage( const char * format, ... )
 {
@@ -28,150 +35,223 @@ void usage( const char * format, ... )
     va_end( args );
 }
 
+void splitPath( tSplitPath * path )
+{
+    /* we're going to split it, so copy it first */
+    path->directory = strdup( path->path );
+    path->name = NULL;
+
+    char * lastSlash = NULL;
+    for ( char * p = path->directory; *p != '\0'; p++ )
+    {
+        if ( *p == '/' )
+        {
+            lastSlash = p;
+        }
+    }
+    if ( lastSlash != NULL )
+    {
+        *lastSlash = '\0';
+        path->name = lastSlash + 1;
+    }
+}
+
+tSplitPath * getMyPath( const char * argv0 )
+{
+    tSplitPath * myPath = calloc( 1, sizeof(tSplitPath) );
+
+    if (myPath != NULL)
+    {
+        char * argv0copy = strdup( argv0 );
+        myPath->directory = realpath( dirname( argv0copy ), NULL);
+        free( argv0copy );
+
+        argv0copy = strdup( argv0 );
+        myPath->name = strdup( basename( argv0copy ) );
+        free( argv0copy );
+
+        size_t size = strlen( myPath->directory ) + strlen( myPath->name ) + sizeof("/");
+        myPath->path = malloc( size );
+        if ( myPath->path != NULL )
+        {
+            snprintf( myPath->path, size, "%s/%s", myPath->directory, myPath->name );
+        }
+    }
+}
+
+
+tSplitPath * getInstallPath( const char * relAppPath )
+{
+    tSplitPath * result = calloc(1, sizeof(tSplitPath));
+
+    if ( result != NULL)
+    {
+        result->path = realpath( relAppPath, NULL );
+        if ( result->path == NULL )
+        {
+            usage( "err: unable to access \'%s\' (%d: %s)\n", relAppPath, errno, strerror( errno ) );
+        }
+        else
+        {
+            splitPath( result );
+
+            if ( access( result->path, X_OK ) != 0 )
+            {
+                usage( "err: \'%s\' is not executable (%d: %s)\n",
+                       result->path, errno, strerror( errno ) );
+                free( result->path);
+                free( result );
+                result = NULL;
+            }
+        }
+    }
+
+    return result;
+}
+
+
+tSplitPath * getScriptsPath( tSplitPath * installPath )
+{
+    tSplitPath *scriptsPath = calloc(1, sizeof(tSplitPath) );
+    if (scriptsPath != NULL )
+    {
+        size_t scriptsDirSize = strlen( installPath->directory) + strlen( installPath->name ) + sizeof("/..d");
+        scriptsPath->directory = malloc( scriptsDirSize );
+        if (scriptsPath->directory != NULL )
+        {
+            snprintf(scriptsPath->directory, scriptsDirSize, "%s/.%s.d",
+                     installPath->directory, installPath->name );
+
+            size_t scriptsNameSize = strlen( installPath->name ) + sizeof("00-");
+            scriptsPath->name = malloc( scriptsNameSize );
+            if (scriptsPath->name != NULL)
+            {
+                snprintf( scriptsPath->name, scriptsNameSize, "00-%s", installPath->name );
+                size_t scriptsPathSize = scriptsDirSize + scriptsNameSize + sizeof("/");
+                scriptsPath->path = malloc(scriptsPathSize);
+                if (scriptsPath->path != NULL)
+                {
+                    snprintf( scriptsPath->path, scriptsPathSize, "%s/%s",
+                              scriptsPath->directory, scriptsPath->name);
+                }
+            }
+        }
+    }
+
+    return scriptsPath;
+}
+
+int makeScriptsDir( tSplitPath * scriptsPath )
+{
+    struct stat dirStat;
+
+    /* establish the script directory */
+    if ( stat( scriptsPath->directory, &dirStat ) == 0 )
+    {
+        if ( (dirStat.st_mode & S_IFMT) != S_IFDIR )
+        {
+            /* something there, but it's not a directory */
+            fprintf( stderr, "err: \"%s\" exists, but is not a directory\n", scriptsPath->directory );
+            return ENOTDIR;
+        }
+    }
+    else
+    {
+        if ( errno != ENOENT )
+        {
+            fprintf( stderr, "err: unable to get info about \'%s\' (%d: %s)\n",
+                     scriptsPath->directory, errno, strerror( errno ) );
+            return errno;
+        }
+        else
+        {
+            /* not there, so create it */
+            if ( mkdir( scriptsPath->directory, S_IRWXU | S_IRWXG ) != 0 )
+            {
+                fprintf( stderr, "err: failed to create \'%s\' (%d: %s)\n",
+                         scriptsPath->directory, errno, strerror( errno ) );
+                return errno;
+            }
+        }
+    }
+    return 0;
+}
+
+const char * getPathToSelf( void )
+{
+    /* figure out the absolute path to this executable */
+    char execPath[PATH_MAX + 1];
+    execPath[0] = '\0';
+    size_t len = readlink( "/proc/self/exe", execPath, sizeof(execPath));
+    if ( len > 0 )
+    {
+        execPath[len] = '\0';
+    }
+    return strdup( execPath );
+};
+
 /**
  * @brief do the shuffle to move the original executable into the .d folder, and creating the symlink.
  * @param app the target app to hook
  * @return exit code
  */
-int install( const char * relAppPath )
+int install( const char *relAppPath )
 {
-    int result = 0;
+    int        result = 0;
+    tSplitPath * installPath;
 
-    char * installPath = realpath( relAppPath, NULL );
-    if ( installPath == NULL )
+    installPath = getInstallPath( relAppPath );
+    if ( installPath != NULL)
     {
-        usage( "err: unable to access \'%s\' (%d: %s)\n", relAppPath, errno, strerror( errno ) );
-    }
-    else
-    {
-        struct stat dirStat;
+        const char * execPath;
+        tSplitPath *scriptsPath = getScriptsPath( installPath );
 
-        if ( access( installPath, X_OK ) != 0 )
+        if ( scriptsPath != NULL)
         {
-            usage( "err: \'%s\' is not executable (%d: %s)",
-                   installPath, errno, strerror( errno ) );
-            return errno;
-        }
-
-        char * instDir = strdup( installPath );
-        char * installDir = dirname( instDir );
-
-        char * instName = strdup( installPath );
-        char * installName = basename( instName );
-
-        char destDir[PATH_MAX];
-        snprintf( destDir, sizeof(destDir), "%s/.%s.d", installDir, installName );
-
-        if ( stat( destDir, &dirStat ) == 0 )
-        {
-            if ( dirStat.st_mode & S_IFMT != S_IFDIR )
+            result = makeScriptsDir( scriptsPath );
+            if ( result != 0 )
             {
-                fprintf( stderr, "err: existing fs object %02x\n", dirStat.st_mode & S_IRWXG );
-                return errno;
-            }
-        }
-        else
-        {
-            if ( errno != ENOENT )
-            {
-                fprintf( stderr, "err: stat %s (%d: %s)\n",
-                         destDir, errno, strerror( errno ) );
-                return errno;
+                return result;
             }
             else
             {
-                if ( mkdir( destDir, S_IRWXU | S_IRWXG ) != 0 )
+                /* first move the executable into the scripts dir and rename to come first */
+                if ( rename( installPath->path, scriptsPath->path ) != 0 )
                 {
-                    fprintf( stderr, "err: failed to create \'%s\' (%d: %s)\n",
-                             destDir, errno, strerror( errno ) );
+                    fprintf( stderr, "err: failed to move \'%s\' to \'%s\' (%d: %s)\n",
+                             installPath->path, scriptsPath->path, errno, strerror(errno));
                     return errno;
                 }
-                else
+
+                execPath = getPathToSelf();
+
+                /* create a symlink to ourselves as the executable we just moved */
+                if ( symlink( execPath, installPath->path ) != 0 )
                 {
-                    // fprintf( stderr, "%s created\n", destDir );
+                    fprintf( stderr, "err: unable to symlink \'%s\' to \'%s\' (%d: %s)\n",
+                             installPath->path, execPath, errno, strerror(errno));
+                    return errno;
                 }
             }
         }
-
-        char destPath[PATH_MAX];
-        snprintf( destPath, sizeof(destPath), "%s/00-%s", destDir, installName );
-        free( instName );
-
-        if ( rename( installPath, destPath ) != 0 )
-        {
-            fprintf( stderr, "err: rename failed (%d: %s)\n", errno, strerror(errno) );
-            return errno;
-        }
-
-        char execPath[PATH_MAX + 1];
-        execPath[0] = '\0';
-        long len = readlink( "/proc/self/exe", execPath, sizeof(execPath) - 1);
-        if ( len > 0 )
-        {
-            execPath[len] = '\0';
-        }
-
-        if ( symlink( execPath, installPath ) != 0 )
-        {
-            fprintf( stderr, "err: unable to symlink %s to %s (%d: %s)\n",
-                     installPath, execPath, strerror( errno ) );
-        }
-
-        free( instDir );
-        free( installPath );
+        fprintf( stderr, "Installed \'%s\' to \'%s\' successfully.\n"
+                         "The script directory can be found at \'%s\'\n",
+                 execPath, installPath->path, scriptsPath->directory );
     }
+
+    /* we probably should free installPath, scriptsPath and execPath,
+     * but it's a little complicated, and we're about to quit anyhow */
 
     return result;
 }
 
-int invoke( int argc, char * argv[], char * envp[] )
+int invoke( tSplitPath * myPath, int argc, char * argv[], char * envp[] )
 {
     int result = 0;
 
-    char * myPath;
-
-    /* dirname may modify string, so make a copy */
-    char * argv0 = strdup( argv[0] );
-    char * path0 = dirname( argv0 );
-    myPath = realpath( path0, NULL );
-
-    char * wd = getcwd( NULL, 0 );
-
-    /* log debug info */
-#if 1
-
-    if ( wd != NULL )
-    {
-        syslog( LOG_INFO, "cwd: \"%s\"", wd );
-    }
-
-    if ( myPath != NULL )
-    {
-        syslog( LOG_INFO, "abs: \"%s\"", myPath );
-    }
-
-    for ( int i = 0; i < argc; i++ )
-    {
-        syslog( LOG_INFO, " %2d: \"%s\"", i, argv[i] );
-    }
-#endif
-
-#if 0
-    if ( envp != NULL )
-    {
-        for ( int i = 0; envp[i] != NULL; i++ )
-        {
-            fprintf(output, "%s\n", envp[i] );
-        }
-    }
-#endif
-
-    /* clean up */
-    free( argv0 );
-    free( wd );
-
     return result;
 }
+
 
 int main( int argc, char * argv[], char * envp[] )
 {
@@ -179,16 +259,12 @@ int main( int argc, char * argv[], char * envp[] )
 
     FILE * output = stdout;
 
-    char * myName = strrchr( argv[0], '/') + 1;
-    if ( myName - 1 == NULL )
-    {
-        myName = argv[0];
-    }
+    tSplitPath * myPath = getMyPath( argv[0] );
 
-    openlog( myName, LOG_PID, LOG_USER );
+    openlog( myPath->name, LOG_PID, LOG_USER );
 
 
-    if ( strcmp( myName, "cuckoo" ) == 0 )
+    if ( strcmp( myPath->name, "cuckoo" ) == 0 )
     {
         /* it's an install */
         if ( argc != 2 || argv[1] == NULL || strlen( argv[1] ) < 1 )
@@ -203,7 +279,7 @@ int main( int argc, char * argv[], char * envp[] )
     else
     {
         /* it's an invocation through a symlink */
-        result = invoke( argc, argv, envp );
+        result = invoke( myPath, argc, argv, envp );
     }
 
     closelog();
