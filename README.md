@@ -1,3 +1,4 @@
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/a65b6ebd6ad34c0aa668bc7eef3a0429)](https://www.codacy.com/gh/paul-chambers/cuckoo/dashboard?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=paul-chambers/cuckoo&amp;utm_campaign=Badge_Grade)
 # cuckoo
 An executable that impersonates another, so that additional executables can also be called each time.
 
