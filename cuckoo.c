@@ -100,8 +100,6 @@ void splitPath( tSplitPath * path )
  */
 void mergePath( tSplitPath * path )
 {
-    char temp[PATH_MAX];
-
     if ( path != NULL )
     {
         /* if there's already a value, free it */
@@ -131,6 +129,7 @@ void mergePath( tSplitPath * path )
             path->name = strdup( "" );
         }
 
+        char temp[PATH_MAX];
         snprintf( temp, sizeof(temp), "%s/%s", path->directory, path->name );
         path->path = realpath( temp, NULL );
     }
