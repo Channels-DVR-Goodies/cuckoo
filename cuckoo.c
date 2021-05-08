@@ -309,7 +309,6 @@ int install( const char *relAppPath )
     installPath = getInstallPath( relAppPath );
     if ( installPath != NULL)
     {
-        const char * execPath;
         tSplitPath *scriptsPath = getScriptsPath( installPath );
 
         if ( scriptsPath != NULL)
@@ -329,7 +328,7 @@ int install( const char *relAppPath )
                     return errno;
                 }
 
-                execPath = getPathToSelf();
+                const char * execPath = getPathToSelf();
 
                 /* create a symlink to ourselves as the executable we just moved */
                 if ( symlink( execPath, installPath->path ) != 0 )
