@@ -1,4 +1,7 @@
 # cuckoo
+
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/08c86bcc18f24730b6468468e532844b)](https://app.codacy.com/gh/paul-chambers/cuckoo?utm_source=github.com&utm_medium=referral&utm_content=paul-chambers/cuckoo&utm_campaign=Badge_Grade_Settings)
+
 An executable that impersonates another, so that additional executables can also be called each time.
 
 The 'itch' that this scratches was Channels DVR lacking a hook to execute additional user-specificed
