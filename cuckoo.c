@@ -491,8 +491,6 @@ int main( int argc, char * argv[], char * envp[] )
 {
     int result = 0;
 
-    FILE * output = stdout;
-
     tSplitPath * myPath = getArgv0Path( argv[0] );
 
     if ( myPath != NULL)
