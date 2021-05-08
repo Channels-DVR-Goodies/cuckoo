@@ -7,5 +7,11 @@ include_directories(.)
 
 add_executable(cuckoo cuckoo.c)
 
+target_link_libraries( cuckoo asan )
+
+target_compile_options( cuckoo PUBLIC "-fsanitize=address" )
+target_compile_options( cuckoo PUBLIC "-fstack-protector" )
+target_compile_options( cuckoo PUBLIC "-fno-omit-frame-pointer")
+
 install( TARGETS cuckoo RUNTIME
          DESTINATION /usr/bin )
