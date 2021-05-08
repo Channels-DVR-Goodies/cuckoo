@@ -289,7 +289,7 @@ const char * getPathToSelf( void )
     /* figure out the absolute path to this executable */
     char temp[PATH_MAX + 1];
     temp[0] = '\0';
-    size_t len = readlink( "/proc/self/exe", temp, sizeof(temp));
+    int len = readlink( "/proc/self/exe", temp, sizeof(temp));
     if ( len >= 0 )
     {
         temp[len] = '\0';
@@ -339,13 +339,16 @@ int install( const char *relAppPath )
                              installPath->path, execPath, errno, strerror(errno));
                     return errno;
                 }
+                else
+                {
+                    fprintf( stderr, "Installed \'%s\' to \'%s\' successfully.\n"
+                                     "The script directory can be found at \'%s\'\n",
+                             execPath, installPath->path, scriptsPath->directory );
+                }
                 free( (void *)execPath );
             }
             freeSplitPath( &scriptsPath );
         }
-        fprintf( stderr, "Installed \'%s\' to \'%s\' successfully.\n"
-                         "The script directory can be found at \'%s\'\n",
-                 execPath, installPath->path, scriptsPath->directory );
 
         freeSplitPath( &installPath );
     }
