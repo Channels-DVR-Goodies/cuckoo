@@ -13,7 +13,7 @@ into it, also renaming it to `00-foobar` so it executes first (executable files 
 are executed in alphabetical order). Then cuckoo creates a symlink `foobar` that points to this
 cuckoo executable (e.g. `foobar` -> `/usr/bin/cuckoo`).
 
-If another process then executes the symlink that's impersonating `foobar`, then `/usr/ion/cuckoo`
+If another process then executes the symlink that's impersonating `foobar`, then `/usr/bin/cuckoo`
 is executed with the parameters the process provided. `cuckoo` then scans `.foobar.d` in alphabetical
 order and executes any excutable files it finds, passing them the same parameters and environment
 that the symlink was passed. Cuckoo will always attempt to execute all the executables it finds,
