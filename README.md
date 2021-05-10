@@ -13,7 +13,7 @@ into it, also renaming it to `00-foobar` so it executes first (executable files 
 are executed in alphabetical order). Then cuckoo creates a symlink `foobar` that points to this
 cuckoo executable (e.g. `foobar` -> `/usr/bin/cuckoo`).
 
-If another process then executes the symlink that's impersonating `foobar`, then `/usr/ion/cuckoo`
+If another process then executes the symlink that's impersonating `foobar`, then `/usr/bin/cuckoo`
 is executed with the parameters the process provided. `cuckoo` then scans `.foobar.d` in alphabetical
 order and executes any excutable files it finds, passing them the same parameters and environment
 that the symlink was passed. Cuckoo will always attempt to execute all the executables it finds,
@@ -28,8 +28,8 @@ user-specified post-processing when a recording completes.
 If you want to stay in the Channels ecosystem (and there's nothing wrong with that) you really don't
 need to post-process the recordings.
 
-However, I use Channels DVR as an (excellent!) front end for Plex to record television.
-In my opinion Channels DVR is a far better DVR than the one built into Plex itself.
+However, I use Channels DVR as an (excellent!) DVR to record television for Plex.
+In my opinion, Channels DVR is far better than the one built into Plex itself.
 
 On the other hand, I prefer Plex's browsing and playback experience over the Channels one.
 So I use the two together. I wish they were more integrated in that respect, but since I have
