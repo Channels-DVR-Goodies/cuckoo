@@ -33,19 +33,26 @@ typedef struct {
 const char * usageInstructions =
 {
     "\n"
-    "Usage: cuckoo <pathname>"
+    "Usage: cuckoo <pathname>\n"
     "  Creates a subdirectory and moves the executable found at <pathname> into it.\n"
     "  A symlink is then created at <pathname> that points to this executable.\n"
+#if 0
     "  When this executable is invoked through the symlink, it goes through the\n"
     "  subdirectory in alphabetical order, executing every executable it finds\n"
     "  there, with the same command line parameters and environment it was\n"
     "  invoked with through the symlink. This allows multiple executables to\n"
     "  be executed transparently each time the original <pathname> executable\n"
     "  would have been invoked before these changes were made.\n"
+#endif
     "\n"
     "More information can be found at https://paul-chambers.github.io/cuckoo\n"
 };
 
+/**
+ * @brief
+ * @param format
+ * @param ...
+ */
 void usage( const char * format, ... )
 {
     va_list args;
@@ -58,83 +65,18 @@ void usage( const char * format, ... )
 }
 
 /**
- * @brief split path into directory and name
- * @param path
+ * @brief
+ * @return
  */
-void splitPath( tSplitPath * path )
+tSplitPath * newSplitPath( void )
 {
-    struct stat pathInfo;
-
-    stat( path->path, &pathInfo );
-    if ( S_ISDIR(pathInfo.st_mode ) )
-    {
-        path->directory = path->path;
-        path->name = strdup( "" );
-    }
-    else
-    {
-        /* we're going to split it, so copy it first */
-        path->directory = strdup( path->path );
-        path->name = NULL;
-
-        char * lastSlash = NULL;
-        for ( char * p = path->directory; *p != '\0'; p++ )
-        {
-            if ( *p == '/' )
-            {
-                lastSlash = p;
-            }
-        }
-        if ( lastSlash != NULL )
-        {
-            *lastSlash = '\0';
-            path->name = strdup(lastSlash + 1);
-            path->directory = realloc( path->directory, (lastSlash - path->directory) + 1 );
-        }
-    }
+    return calloc( 1, sizeof(tSplitPath) );
 }
 
 /**
- * @brief merge directory and name to create a path
- * @param ->path filled in with absolute path
+ * @brief
+ * @param pPath
  */
-void mergePath( tSplitPath * path )
-{
-    if ( path != NULL )
-    {
-        /* if there's already a value, free it */
-        if ( path->path != NULL )
-        {
-            free( path->path );
-            path->path = NULL;
-        }
-
-        /* fix up the directory component, so it's an absolute path */
-        if ( path->directory == NULL )
-        {
-            /* no directory component, so use the current working directory */
-            path->directory = getcwd( NULL, 0 );
-        }
-        else if ( path->directory[0] != '/' )
-        {
-            /* existing relative path, so convert to absolute */
-            char * dir = path->directory;
-            path->directory = realpath( dir, NULL );
-            free( dir );
-        }
-
-        /* make sure that snprintf doesn't emit '(null)' */
-        if ( path->name == NULL )
-        {
-            path->name = strdup( "" );
-        }
-
-        char temp[PATH_MAX];
-        snprintf( temp, sizeof(temp), "%s/%s", path->directory, path->name );
-        path->path = realpath( temp, NULL );
-    }
-}
-
 void freeSplitPath( tSplitPath ** pPath )
 {
     tSplitPath * path = *pPath;
@@ -160,54 +102,67 @@ void freeSplitPath( tSplitPath ** pPath )
     }
 }
 
-tSplitPath * getArgv0Path(const char * argv0 )
+/**
+ * @brief convert a path to absolute path, then split it into directory and name
+ * @param path
+ */
+tSplitPath * splitPath( const char * path )
 {
-    tSplitPath * myPath = calloc( 1, sizeof(tSplitPath) );
+    tSplitPath * result = NULL;
 
-    if (myPath != NULL)
+
+    char * absPath = realpath( path, NULL );
+
+    if ( absPath == NULL )
     {
-        myPath->path = strdup( argv0 );
-        splitPath( myPath );
-
-        char * p = myPath->directory;
-        myPath->directory = realpath( p, NULL );
-        free( p );
-
-        free( myPath->path );
-        size_t size = strlen( myPath->directory ) + strlen( myPath->name) + sizeof("/");
-        myPath->path = malloc( size );
-        if ( myPath->path != NULL )
-        {
-            snprintf( myPath->path, size, "%s/%s", myPath->directory, myPath->name );
-        }
+        fprintf( stderr, "err: \'%s\' doesn't appear to be a valid path (%d: %s)\n",
+                 path, errno, strerror( errno ) );
     }
-
-    return myPath;
-}
-
-tSplitPath * getInstallPath( const char * relAppPath )
-{
-    tSplitPath * result = calloc(1, sizeof(tSplitPath));
-
-    if ( result != NULL)
+    else
     {
-        result->path = realpath( relAppPath, NULL );
-        if ( result->path == NULL )
+        struct stat pathInfo;
+        if ( stat( absPath, &pathInfo ) != 0 )
         {
-            usage( "err: unable to access \'%s\' (%d: %s)\n", relAppPath, errno, strerror( errno ) );
+            fprintf( stderr, "err: unable to get information about \'%s\' (%d: %s)\n",
+                     path, errno, strerror(errno));
         }
         else
         {
-            splitPath( result );
-
-            if ( access( result->path, X_OK ) != 0 )
+            result = newSplitPath();
+            if ( result != NULL)
             {
-                usage( "err: \'%s\' is not executable (%d: %s)\n",
-                       result->path, errno, strerror( errno ) );
+                result->path = absPath;
+                if ( S_ISREG( pathInfo.st_mode ) )
+                {
+                    /* it's a file, so strip off the last element to create the absolute directory path */
+                    result->directory = strdup( absPath );
 
-                free( result->path);
-                free( result );
-                result = NULL;
+                    char * lastSlash = NULL;
+                    for ( char * p = result->directory; *p != '\0'; p++ )
+                    {
+                        if ( *p == '/' )
+                        {
+                            lastSlash = p;
+                        }
+                    }
+                    if ( lastSlash != NULL)
+                    {
+                        *lastSlash++ = '\0';
+                        result->name      = strdup( lastSlash );
+                        result->directory = realloc( result->directory, (lastSlash - result->directory));
+                    }
+                }
+                else if ( S_ISDIR( pathInfo.st_mode ) )
+                {
+                    result->directory = absPath;
+                    result->name      = strdup( "" );
+                }
+                else
+                {
+                    fprintf( stderr, "err: unsupported filesystem object \'%s\' (%d: %s)\n",
+                             absPath, errno, strerror(errno));
+                    freeSplitPath( &result );
+                }
             }
         }
     }
@@ -215,10 +170,37 @@ tSplitPath * getInstallPath( const char * relAppPath )
     return result;
 }
 
+/**
+ * @brief
+ * @param relAppPath
+ * @return
+ */
+tSplitPath * getInstallPath( const char * relAppPath )
+{
+    tSplitPath * result = splitPath( relAppPath );
 
+    if ( result != NULL )
+    {
+        if ( access( result->path, X_OK ) != 0 )
+        {
+            usage( "err: \'%s\' is not executable (%d: %s)\n",
+                   result->path, errno, strerror( errno ) );
+
+            freeSplitPath( &result );
+        }
+    }
+
+    return result;
+}
+
+/**
+ * @brief
+ * @param installPath
+ * @return
+ */
 tSplitPath * getScriptsPath( tSplitPath * installPath )
 {
-    tSplitPath *scriptsPath = calloc(1, sizeof(tSplitPath) );
+    tSplitPath *scriptsPath = newSplitPath();
     if (scriptsPath != NULL )
     {
         size_t scriptsDirSize = strlen( installPath->directory) + strlen( installPath->name ) + sizeof("/..d");
@@ -247,6 +229,11 @@ tSplitPath * getScriptsPath( tSplitPath * installPath )
     return scriptsPath;
 }
 
+/**
+ * @brief
+ * @param scriptsPath
+ * @return
+ */
 int makeScriptsDir( tSplitPath * scriptsPath )
 {
     struct stat dirStat;
@@ -283,6 +270,10 @@ int makeScriptsDir( tSplitPath * scriptsPath )
     return 0;
 }
 
+/**
+ * @brief get the full path to ourselves
+ * @return absolute path to the executable used to create this process (caller should free)
+ */
 const char * getPathToSelf( void )
 {
     /* figure out the absolute path to this executable */
@@ -298,7 +289,7 @@ const char * getPathToSelf( void )
 
 /**
  * @brief do the shuffle to move the original executable into the .d folder, and creating the symlink.
- * @param app the target app to hook
+ * @param app the target executable to hook
  * @return exit code
  */
 int install( const char *relAppPath )
@@ -358,10 +349,10 @@ int install( const char *relAppPath )
 }
 
 /**
- * @brief launches an executable
+ * @brief launches an executable.
  * @param argv array of arguments. argv[0] is path to executable. terminated by null pointer.
  * @param envp array of environment values, terminated by null pointer.
- * @return exit code from launched process.
+ * @return exit code from the launched process.
  */
 int launch( char * argv[], char * envp[] )
 {
@@ -401,6 +392,14 @@ typedef struct sExecutable {
 
 tExecutable * executableHead;
 
+/**
+ * @brief
+ * @param path
+ * @param info
+ * @param entryType
+ * @param ftw
+ * @return
+ */
 int forEachEntry( const char * path, const struct stat *info, int entryType, struct FTW * ftw )
 {
     int result = FTW_CONTINUE;
@@ -452,6 +451,13 @@ int forEachEntry( const char * path, const struct stat *info, int entryType, str
     return result;
 }
 
+/**
+ * @brief
+ * @param myPath
+ * @param argv
+ * @param envp
+ * @return
+ */
 int invoke( tSplitPath * myPath, char * argv[], char * envp[] )
 {
     int result = 0;
@@ -486,12 +492,18 @@ int invoke( tSplitPath * myPath, char * argv[], char * envp[] )
     return result;
 }
 
-
+/**
+ * @brief
+ * @param argc
+ * @param argv
+ * @param envp
+ * @return
+ */
 int main( int argc, char * argv[], char * envp[] )
 {
     int result = 0;
 
-    tSplitPath * myPath = getArgv0Path( argv[0] );
+    tSplitPath * myPath = splitPath( argv[0] );
 
     if ( myPath != NULL)
     {
