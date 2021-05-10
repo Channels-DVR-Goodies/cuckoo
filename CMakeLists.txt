@@ -13,9 +13,5 @@ target_compile_options( cuckoo PUBLIC "-fsanitize=address" )
 target_compile_options( cuckoo PUBLIC "-fstack-protector" )
 target_compile_options( cuckoo PUBLIC "-fno-omit-frame-pointer")
 
-add_executable( logargs logargs.c )
-
-install( TARGETS cuckoo logargs RUNTIME
+install( TARGETS cuckoo RUNTIME
          DESTINATION /usr/bin )
-
-
