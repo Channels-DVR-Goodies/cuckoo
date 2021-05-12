@@ -59,192 +59,75 @@ void usage( const char * format, ... )
     va_start( args, format );
 
     vfprintf( stderr, format, args );
-    fprintf( stderr, "%sn", usageInstructions );
+    fprintf( stderr, "%s", usageInstructions );
 
     va_end( args );
 }
 
 /**
  * @brief
+ * @param path
  * @return
  */
-tSplitPath * newSplitPath( void )
+const char * dirnamedup( const char * path )
 {
-    return calloc( 1, sizeof(tSplitPath) );
-}
+    char * result = NULL;
 
-/**
- * @brief
- * @param pPath
- */
-void freeSplitPath( tSplitPath ** pPath )
-{
-    tSplitPath * path = *pPath;
-    if ( path != NULL )
+    char * copy = strdup( path );
+    char * lastSlash = strrchr( copy,'/' );
+    if ( lastSlash != NULL)
     {
-        if (path->path != NULL)
-        {
-            free( path->path );
-            path->path = NULL;
-        }
-        if (path->directory != NULL)
-        {
-            free( path->directory );
-            path->directory = NULL;
-        }
-        if (path->name != NULL)
-        {
-            free( path->name );
-            path->name = NULL;
-        }
-        free( path );
-        *pPath = NULL;
-    }
-}
-
-/**
- * @brief convert a path to absolute path, then split it into directory and name
- * @param path
- */
-tSplitPath * splitPath( const char * path )
-{
-    tSplitPath * result = NULL;
-
-
-    char * absPath = realpath( path, NULL );
-
-    if ( absPath == NULL )
-    {
-        fprintf( stderr, "err: \'%s\' doesn't appear to be a valid path (%d: %s)\n",
-                 path, errno, strerror( errno ) );
+        lastSlash[1] = '\0';
+        result = realpath( copy, NULL );
     }
     else
     {
-        struct stat pathInfo;
-        if ( stat( absPath, &pathInfo ) != 0 )
-        {
-            fprintf( stderr, "err: unable to get information about \'%s\' (%d: %s)\n",
-                     path, errno, strerror(errno));
-        }
-        else
-        {
-            result = newSplitPath();
-            if ( result != NULL)
-            {
-                result->path = absPath;
-                if ( S_ISREG( pathInfo.st_mode ) )
-                {
-                    /* it's a file, so strip off the last element to create the absolute directory path */
-                    result->directory = strdup( absPath );
-
-                    char * lastSlash = NULL;
-                    for ( char * p = result->directory; *p != '\0'; p++ )
-                    {
-                        if ( *p == '/' )
-                        {
-                            lastSlash = p;
-                        }
-                    }
-                    if ( lastSlash != NULL)
-                    {
-                        *lastSlash++ = '\0';
-                        result->name      = strdup( lastSlash );
-                        result->directory = realloc( result->directory, (lastSlash - result->directory));
-                    }
-                }
-                else if ( S_ISDIR( pathInfo.st_mode ) )
-                {
-                    result->directory = absPath;
-                    result->name      = strdup( "" );
-                }
-                else
-                {
-                    fprintf( stderr, "err: unsupported filesystem object \'%s\' (%d: %s)\n",
-                             absPath, errno, strerror(errno));
-                    freeSplitPath( &result );
-                }
-            }
-        }
+        result = get_current_dir_name();
     }
+    free( copy );
 
     return result;
 }
 
 /**
  * @brief
- * @param relAppPath
+ * @param path
  * @return
  */
-tSplitPath * getInstallPath( const char * relAppPath )
+const char * basenamedup( const char * path )
 {
-    tSplitPath * result = splitPath( relAppPath );
+    char * result = NULL;
 
-    if ( result != NULL )
+    char * lastSlash = strrchr( path,'/' );
+    if ( lastSlash != NULL)
     {
-        if ( access( result->path, X_OK ) != 0 )
-        {
-            usage( "err: \'%s\' is not executable (%d: %s)\n",
-                   result->path, errno, strerror( errno ) );
-
-            freeSplitPath( &result );
-        }
+        result = strdup( lastSlash + 1 );
+    }
+    else
+    {
+        result = strdup( path );
     }
 
     return result;
 }
 
-/**
- * @brief
- * @param installPath
- * @return
- */
-tSplitPath * getScriptsPath( tSplitPath * installPath )
-{
-    tSplitPath *scriptsPath = newSplitPath();
-    if (scriptsPath != NULL )
-    {
-        size_t scriptsDirSize = strlen( installPath->directory) + strlen( installPath->name ) + sizeof("/..d");
-        scriptsPath->directory = malloc( scriptsDirSize );
-        if (scriptsPath->directory != NULL )
-        {
-            snprintf(scriptsPath->directory, scriptsDirSize, "%s/.%s.d",
-                     installPath->directory, installPath->name );
-
-            size_t scriptsNameSize = strlen( installPath->name ) + sizeof("00-");
-            scriptsPath->name = malloc( scriptsNameSize );
-            if (scriptsPath->name != NULL)
-            {
-                snprintf( scriptsPath->name, scriptsNameSize, "00-%s", installPath->name );
-                size_t scriptsPathSize = scriptsDirSize + scriptsNameSize + sizeof("/");
-                scriptsPath->path = malloc(scriptsPathSize);
-                if (scriptsPath->path != NULL)
-                {
-                    snprintf( scriptsPath->path, scriptsPathSize, "%s/%s",
-                              scriptsPath->directory, scriptsPath->name);
-                }
-            }
-        }
-    }
-
-    return scriptsPath;
-}
 
 /**
  * @brief
- * @param scriptsPath
+ * @param scriptsDir
  * @return
  */
-int makeScriptsDir( tSplitPath * scriptsPath )
+int makeScriptsDir( const char * scriptsDir )
 {
     struct stat dirStat;
 
     /* establish the script directory */
-    if ( stat( scriptsPath->directory, &dirStat ) == 0 )
+    if ( stat( scriptsDir, &dirStat ) == 0 )
     {
         if ( (dirStat.st_mode & S_IFMT) != S_IFDIR )
         {
             /* something there, but it's not a directory */
-            fprintf( stderr, "err: \"%s\" exists, but is not a directory\n", scriptsPath->directory );
+            fprintf( stderr, "err: \"%s\" exists, but is not a directory\n", scriptsDir );
             return ENOTDIR;
         }
     }
@@ -253,16 +136,16 @@ int makeScriptsDir( tSplitPath * scriptsPath )
         if ( errno != ENOENT )
         {
             fprintf( stderr, "err: unable to get info about \'%s\' (%d: %s)\n",
-                     scriptsPath->directory, errno, strerror( errno ) );
+                     scriptsDir, errno, strerror(errno ) );
             return errno;
         }
         else
         {
             /* not there, so create it */
-            if ( mkdir( scriptsPath->directory, S_IRWXU | S_IRWXG ) != 0 )
+            if ( mkdir( scriptsDir, S_IRWXU | S_IRWXG ) != 0 )
             {
                 fprintf( stderr, "err: failed to create \'%s\' (%d: %s)\n",
-                         scriptsPath->directory, errno, strerror( errno ) );
+                         scriptsDir, errno, strerror(errno ) );
                 return errno;
             }
         }
@@ -292,56 +175,79 @@ const char * getPathToSelf( void )
  * @param app the target executable to hook
  * @return exit code
  */
-int install( const char *relAppPath )
+int install( char *argv[] )
 {
     int        result = 0;
-    tSplitPath * installPath;
 
-    installPath = getInstallPath( relAppPath );
-    if ( installPath != NULL)
+    const char * installName = basenamedup( argv[1]);
+    if ( installName != NULL)
     {
-        tSplitPath *scriptsPath = getScriptsPath( installPath );
-
-        if ( scriptsPath != NULL)
+        const char * installDir = dirnamedup( argv[1] );
+        if ( installDir != NULL)
         {
-            result = makeScriptsDir( scriptsPath );
-            if ( result != 0 )
+            char *installPath;
+            char *scriptsDir;
+            if ( asprintf( &installPath, "%s/%s", installDir, installName ) < 0 )
             {
-                return result;
+                fprintf( stderr, "err: unable to build path to the install executable \'%s\' (%d: %s)\n",
+                         installPath, errno, strerror(errno));
+                result = errno;
+            }
+            else if ( asprintf( &scriptsDir, "%s/.%s.d", installDir, installName ) < 0 )
+            {
+                fprintf( stderr, "err: unable to build path to the scripts directory \'%s\' (%d: %s)\n",
+                         scriptsDir, errno, strerror(errno));
+                result = errno;
             }
             else
             {
-                /* first move the executable into the scripts dir and rename to come first */
-                if ( rename( installPath->path, scriptsPath->path ) != 0 )
+                result = makeScriptsDir( scriptsDir );
+                if ( result == 0 )
                 {
-                    fprintf( stderr, "err: failed to move \'%s\' to \'%s\' (%d: %s)\n",
-                             installPath->path, scriptsPath->path, errno, strerror(errno));
-                    return errno;
-                }
+                    char * scriptsDest;
+                    if ( asprintf( &scriptsDest, "%s/00-%s", scriptsDir, installName ) < 0 )
+                    {
+                        fprintf( stderr, "err: unable to construct destination path for \'%s\' (%d: %s)\n",
+                                 installPath, errno, strerror(errno));
+                    }
+                    else
+                    {
+                        /* first move the executable into the scripts dir and rename to come first */
+                        if ( rename( installPath, scriptsDest ) != 0 )
+                        {
+                            fprintf( stderr, "err: failed to move \'%s\' to \'%s\' (%d: %s)\n",
+                                     installPath, scriptsDir, errno, strerror(errno));
+                            return errno;
+                        }
+                        else
+                        {
+                            /* create a symlink to ourselves as the executable we just moved */
+                            const char * execPath = getPathToSelf();
 
-                const char * execPath = getPathToSelf();
-
-                /* create a symlink to ourselves as the executable we just moved */
-                if ( symlink( execPath, installPath->path ) != 0 )
-                {
-                    fprintf( stderr, "err: unable to symlink \'%s\' to \'%s\' (%d: %s)\n",
-                             installPath->path, execPath, errno, strerror(errno));
-                    return errno;
+                            if ( symlink( execPath, installPath ) != 0 )
+                            {
+                                fprintf( stderr, "err: unable to symlink \'%s\' to \'%s\' (%d: %s)\n",
+                                         installPath, execPath, errno, strerror(errno));
+                                return errno;
+                            }
+                            else
+                            {
+                                fprintf( stderr, "Installed \'%s\' to \'%s\' successfully.\n"
+                                                 "The script directory can be found at \'%s\'\n",
+                                         execPath, installPath, scriptsDir );
+                            }
+                            free( (void *)execPath );
+                        }
+                        free( scriptsDest );
+                    }
                 }
-                else
-                {
-                    fprintf( stderr, "Installed \'%s\' to \'%s\' successfully.\n"
-                                     "The script directory can be found at \'%s\'\n",
-                             execPath, installPath->path, scriptsPath->directory );
-                }
-                free( (void *)execPath );
+                free( scriptsDir );
+                free( installPath );
             }
-            freeSplitPath( &scriptsPath );
+            free( (void *)installDir );
         }
-
-        freeSplitPath( &installPath );
+        free( (void *)installName );
     }
-
     /* we probably should free installPath, scriptsPath and execPath,
      * but it's a little complicated, and we're about to quit anyhow */
 
@@ -376,7 +282,7 @@ int launch( char * argv[], char * envp[] )
 
     default: /* this execution thread is the parent - 'pid' is of the child */
         waitpid( pid, &status, 0 );
-        if ( WEXITSTATUS( status ) )
+        if ( WIFEXITED( status ) )
         {
             result = WEXITSTATUS( status );
         }
@@ -412,7 +318,7 @@ int forEachEntry( const char * path, const struct stat *info, int entryType, str
     case FTW_DNR:
         if ( ftw->level > 0 )
         {
-            /* for any directory apart from the root one, don't decend into it */
+            /* for any directory apart from the topmost one, don't descend into it */
             result = FTW_SKIP_SUBTREE;
         }
         break;
@@ -453,42 +359,59 @@ int forEachEntry( const char * path, const struct stat *info, int entryType, str
 
 /**
  * @brief
- * @param myPath
  * @param argv
  * @param envp
  * @return
  */
-int invoke( tSplitPath * myPath, char * argv[], char * envp[] )
+int invoke( char * argv[], char * envp[] )
 {
     int result = 0;
 
-    tSplitPath *scriptsPath = getScriptsPath( myPath );
-    // fprintf( stderr, "directory %s\n", scriptsPath->directory );
+    fprintf( stderr, "    argv[0]: %s\n", argv[0] );
 
-    executableHead = NULL;
-
-    nftw( scriptsPath->directory, forEachEntry, 2, FTW_ACTIONRETVAL );
-
-    tExecutable * executable = executableHead;
-    while ( executable != NULL )
+    const char * installName = basenamedup( argv[0]);
+    const char * installDir = dirnamedup( argv[0] );
+    if ( installName != NULL && installDir != NULL)
     {
-        argv[0] = executable->path;
-        int res = launch( argv, envp );
-        if ( result == 0 && res != 0 )
+        char * scriptsDir;
+        if ( asprintf( &scriptsDir, "%s/.%s.d", installDir, installName ) < 0 )
         {
-            result = res;
+            fprintf( stderr, "err: unable to build path to the scripts directory \'%s\' (%d: %s)\n",
+                     scriptsDir, errno, strerror( errno ) );
         }
+        else if ( scriptsDir != NULL )
+        {
+            fprintf( stderr, "    argv[0]: %s\ninstallName: %s\n installDir: %s\n scriptsDir: %s\n",
+                     argv[0], installName, installDir, scriptsDir );
 
-        /* done with this one, so free it */
-        tExecutable * f = executable;
-        executable = executable->next;
-        free( f );
+            executableHead = NULL;
+
+            nftw( scriptsDir, forEachEntry, 2, FTW_ACTIONRETVAL );
+
+            tExecutable * executable = executableHead;
+            while ( executable != NULL)
+            {
+                argv[0] = executable->path;
+                fprintf( stderr, "launch %s\n", argv[0] );
+                int res = launch( argv, envp );
+                if ( result == 0 && res != 0 )
+                {
+                    result = res;
+                }
+
+                /* done with this one, so free it */
+                tExecutable *f = executable;
+                executable = executable->next;
+                free( f );
+            }
+
+            executableHead = NULL;
+
+            free( scriptsDir );
+        }
+        free( (void *)installDir );
+        free( (void *)installName );
     }
-
-    executableHead = NULL;
-
-    freeSplitPath( &scriptsPath );
-
     return result;
 }
 
@@ -503,14 +426,13 @@ int main( int argc, char * argv[], char * envp[] )
 {
     int result = 0;
 
-    tSplitPath * myPath = splitPath( argv[0] );
+    const char * myName = basenamedup( argv[0] );
 
-    if ( myPath != NULL)
+    if ( myName != NULL)
     {
-        openlog( myPath->name, LOG_PID, LOG_USER );
+        openlog( myName, LOG_PID, LOG_USER );
 
-
-        if ( strcmp( myPath->name, "cuckoo" ) == 0 )
+        if ( strcmp( myName, "cuckoo" ) == 0 )
         {
             /* it's an install */
             if ( argc != 2 || argv[1] == NULL || strlen( argv[1] ) < 1 )
@@ -519,18 +441,18 @@ int main( int argc, char * argv[], char * envp[] )
             }
             else
             {
-                result = install( argv[1] );
+                result = install( argv );
             }
         }
         else
         {
             /* it's an invocation through a symlink */
-            result = invoke( myPath, argv, envp );
+            result = invoke( argv, envp );
         }
 
-        freeSplitPath( &myPath );
-
         closelog();
+
+        free( (void *)myName );
     }
 
     return result;
