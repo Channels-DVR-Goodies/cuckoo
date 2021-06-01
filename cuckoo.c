@@ -48,6 +48,58 @@ const char * usageInstructions =
     "More information can be found at https://paul-chambers.github.io/cuckoo\n"
 };
 
+#define debugf( ... ) DebugF_( __func__, __LINE__, __VA_ARGS__ )
+
+static void DebugF_( const char * function, const int line, const char * format, ... )
+{
+	va_list args;
+
+	va_start( args, format );
+
+	vfprintf( stderr, format, args );
+	fprintf(  stderr, " (%s() at line %d)\n", function, line );
+
+	va_end( args );
+}
+
+#define reportError( ... ) ReportError_( __func__, __LINE__, __VA_ARGS__ )
+
+static int ReportError_( const char * function, const int line, const char * format, ... )
+{
+    va_list args;
+
+    int savedErrno = errno;
+
+    va_start( args, format );
+
+    fprintf(  stderr, "err: " );
+    vfprintf( stderr, format, args );
+    fprintf(  stderr, " (%s() at line %d)\n", function, line );
+
+    va_end( args );
+
+    return savedErrno;
+}
+
+#define reportErrno( ... ) ReportErrno_( __func__, __LINE__, __VA_ARGS__ )
+
+static int ReportErrno_( const char * function, const int line, const char * format, ... )
+{
+	va_list args;
+
+	int savedErrno = errno;
+
+	va_start( args, format );
+
+	fprintf( stderr, "err: " );
+	vfprintf( stderr, format, args );
+	fprintf( stderr, " (%d: %s) in %s() at line %d\n", savedErrno, strerror( savedErrno ), function, line );
+
+	va_end( args );
+
+	return savedErrno;
+}
+
 /**
  * @brief
  * @param format
@@ -69,22 +121,64 @@ void usage( const char * format, ... )
  * @param path
  * @return
  */
-const char * dirnamedup( const char * path )
+const char * absolutePath( const char * path )
 {
     char * result = NULL;
+    struct stat pathInfo;
+    char * dir;
+    char * directory;
+    char * filename;
 
-    char * copy = strdup( path );
-    char * lastSlash = strrchr( copy,'/' );
-    if ( lastSlash != NULL)
+    if( lstat( path, &pathInfo ) != 0 )
     {
-        lastSlash[1] = '\0';
-        result = realpath( copy, NULL );
+        reportErrno( "unable to get information about \'%s\'", path );
+        return NULL;
     }
-    else
+
+    switch ( pathInfo.st_mode & S_IFMT )
     {
-        result = get_current_dir_name();
+    case S_IFLNK:
+        {
+            char * copy = strdup( path );
+            if ( copy != NULL )
+            {
+                filename = strrchr( copy, '/' );
+                if ( filename == NULL )
+                {
+                    /* no slash, just the filename */
+                    dir = "./";
+                    filename = copy;
+                }
+                else
+                {
+                    dir = copy;
+                    *filename++ = '\0';
+                }
+
+                directory = realpath( dir, NULL);
+                if ( directory != NULL )
+                {
+                    asprintf( &result, "%s/%s", directory, filename );
+                    free( directory );
+                }
+
+                free( copy );
+            }
+
+        }
+        break;
+
+    case S_IFREG:
+    case S_IFDIR:
+        result = realpath( path, NULL );
+        break;
+
+    default:
+        /* whatever it is, we don't support it */
+        reportError( "\'%s\' isn't supported", path );
+        result = NULL;
+        break;
     }
-    free( copy );
 
     return result;
 }
@@ -111,46 +205,187 @@ const char * basenamedup( const char * path )
     return result;
 }
 
+/**
+ * @brief creates all directories of a path that are missing (like mkdir -p)
+ * @param path
+ * @return
+ */
+static int mkDirRecurse( const char * path )
+{
+    int result;
+    struct stat   dirStat;
+
+    if ( stat( path, &dirStat ) != 0 )
+    {
+        if (errno == ENOENT)
+        {
+            char * parent = strdup( path );
+            result = mkDirRecurse( dirname( parent ) );
+            free( parent );
+            if (result == 0)
+            {
+                result = mkdir( path, S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
+                if ( result != 0 )
+                {
+                    reportErrno( "unable to create directory \'%s\'", path );
+                }
+            }
+            return result;
+        }
+        else
+        {
+            return reportErrno( "unable to get information about \'%s\'", path );
+        }
+    }
+    return 0;
+}
+
+/**
+ * @brief
+ * @param path
+ * @return
+ */
+const char * makeDirectory( const char * path )
+{
+    const char *  result = NULL;
+    struct stat   dirStat;
+
+    /* does the script directory already exist? */
+    if ( stat( path, &dirStat ) == 0 )
+    {
+        if ( S_ISDIR(dirStat.st_mode ) )
+        {
+            result = path;
+        }
+        else
+        {
+            /* something there already, but it's not a directory */
+            reportErrno( "\'%s\' exists, but is not a directory", path );
+        }
+    }
+    else
+    {
+        /* stat() failed */
+        if ( errno != ENOENT )
+        {
+            /* report anything other than the expected 'not found' */
+            reportErrno( "unable to get info about \'%s\'", path );
+        }
+        else if ( mkDirRecurse( path ) == 0 )
+        {
+            result = path;
+        }
+    }
+    return strdup( result );
+}
+
+/**
+ * @brief
+ * @param absPathFrom
+ * @param absPathTo
+ * @return
+ */
+const char * makeSymlink( const char * absPathFrom, const char * absPathTo )
+{
+    const char *  result = NULL;
+    struct stat   dirStat;
+
+    debugf("from: \'%s\' to: \'%s\'", absPathFrom, absPathTo );
+    /* does the link to the script directory already exist? */
+    if ( stat( absPathFrom, &dirStat ) == 0 )
+    {
+        if ( S_ISLNK( dirStat.st_mode ) )
+        {
+            /* a symlink exists, we're good. */
+            result = absPathFrom;
+        }
+        else
+        {
+            /* something there already, but it's not a symbolic link */
+            reportErrno( "\'%s\' exists, but is not a symbolic link", absPathFrom );
+        }
+    }
+    else
+    {
+        /* stat() failed */
+        if ( errno != ENOENT )
+        {
+            /* report anything other than the expected 'not found' */
+            reportErrno( "unable to get info about \'%s\'", absPathFrom );
+        }
+        else if ( symlink( absPathFrom, absPathTo ) != 0 )
+        {
+            reportErrno( "failed to create a symbolic link from \'%s\' to \'%s\'", absPathFrom, absPathTo );
+        }
+        else
+        {
+            /* successfully created the symlink */
+            result = absPathFrom;
+        }
+    }
+    return result;
+}
 
 /**
  * @brief
  * @param scriptsDir
  * @return
  */
-int makeScriptsDir( const char * scriptsDir )
+const char * getScriptsDir( const char * absPath )
 {
-    struct stat dirStat;
+    const char *  result = NULL;
 
-    /* establish the script directory */
-    if ( stat( scriptsDir, &dirStat ) == 0 )
+    char * dir = strdup( absPath );
+    if ( dir != NULL )
     {
-        if ( (dirStat.st_mode & S_IFMT) != S_IFDIR )
+        char * base = strrchr( dir, '/' );
+        if ( base != NULL)
         {
-            /* something there, but it's not a directory */
-            fprintf( stderr, "err: \"%s\" exists, but is not a directory\n", scriptsDir );
-            return ENOTDIR;
-        }
-    }
-    else
-    {
-        if ( errno != ENOENT )
-        {
-            fprintf( stderr, "err: unable to get info about \'%s\' (%d: %s)\n",
-                     scriptsDir, errno, strerror(errno ) );
-            return errno;
-        }
-        else
-        {
-            /* not there, so create it */
-            if ( mkdir( scriptsDir, S_IRWXU | S_IRWXG ) != 0 )
+            *base++ = '\0';
+
+            char * scriptsDir = NULL;
+            asprintf( &scriptsDir, "%s/.%s.d", dir, base );
+            if ( scriptsDir != NULL )
             {
-                fprintf( stderr, "err: failed to create \'%s\' (%d: %s)\n",
-                         scriptsDir, errno, strerror(errno ) );
-                return errno;
+                result = makeDirectory( scriptsDir );
+                free( scriptsDir );
             }
         }
+        free( dir );
     }
-    return 0;
+
+    return result;
+}
+
+/**
+ * @brief
+ * @param scriptsDir
+ * @return
+ */
+const char * getCommonDir( const char * absPath )
+{
+    const char *  result = NULL;
+
+    char * dir = strdup( absPath );
+    if ( dir != NULL )
+    {
+        char * base = strrchr( dir, '/' );
+        if ( base != NULL)
+        {
+            *base++ = '\0';
+
+            char * commonDir = NULL;
+            asprintf( &commonDir, "/etc/cuckoo/%s", base );
+            if ( commonDir != NULL )
+            {
+                result = makeDirectory( commonDir );
+                free( commonDir );
+            }
+        }
+        free( dir );
+    }
+
+    return result;
 }
 
 /**
@@ -175,81 +410,86 @@ const char * getPathToSelf( void )
  * @param app the target executable to hook
  * @return exit code
  */
-int install( char *argv[] )
+int install( char * argv[] )
 {
-    int        result = 0;
+    int result = 0;
 
-    const char * installName = basenamedup( argv[1]);
-    if ( installName != NULL)
+    const char * installPath = absolutePath( argv[1] );
+    if ( installPath != NULL)
     {
-        const char * installDir = dirnamedup( argv[1] );
-        if ( installDir != NULL)
+        const char * filename = basenamedup( installPath );
+        if ( filename != NULL )
         {
-            char *installPath;
-            char *scriptsDir;
-            if ( asprintf( &installPath, "%s/%s", installDir, installName ) < 0 )
+            const char * scriptsDir = getScriptsDir( installPath );
+            if ( scriptsDir != NULL)
             {
-                fprintf( stderr, "err: unable to build path to the install executable \'%s\' (%d: %s)\n",
-                         installPath, errno, strerror(errno));
-                result = errno;
-            }
-            else if ( asprintf( &scriptsDir, "%s/.%s.d", installDir, installName ) < 0 )
-            {
-                fprintf( stderr, "err: unable to build path to the scripts directory \'%s\' (%d: %s)\n",
-                         scriptsDir, errno, strerror(errno));
-                result = errno;
-            }
-            else
-            {
-                result = makeScriptsDir( scriptsDir );
-                if ( result == 0 )
+                struct stat targetStat;
+                if ( lstat( installPath, &targetStat ) != 0 )
                 {
-                    char * scriptsDest;
-                    if ( asprintf( &scriptsDest, "%s/00-%s", scriptsDir, installName ) < 0 )
+                    result = reportErrno( "unable to get information on \'%s\'", installPath );
+                }
+                else switch ( targetStat.st_mode & S_IFMT )
+                {
+                default:
+                    /* whatever it is, we can't support it */
+                    reportError( "\'%s\' ism't a supported file type", installPath );
+                    result = -1;
+                    break;
+
+                case S_IFLNK:
+                    /* we've been here already? */
+                    printf( "nothing to do - \'%s\' is already a symlink\n", installPath );
+                    result = 0;
+                    break;
+
+                case S_IFREG:
+                    /* ok, at least it's a regular file. Is it executable? */
+                    if ( (targetStat.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0 )
                     {
-                        fprintf( stderr, "err: unable to construct destination path for \'%s\' (%d: %s)\n",
-                                 installPath, errno, strerror(errno));
+                        reportError( "\'%s\' is not executable", installPath );
+                        result = -1;
                     }
                     else
                     {
-                        /* first move the executable into the scripts dir and rename to come first */
-                        if ( rename( installPath, scriptsDest ) != 0 )
+                        /* move the executable into the scripts dir and rename it so it sorts first */
+                        char * targetPath;
+                        asprintf( &targetPath, "%s/50-%s", scriptsDir, filename );
+                        if (targetPath != NULL)
                         {
-                            fprintf( stderr, "err: failed to move \'%s\' to \'%s\' (%d: %s)\n",
-                                     installPath, scriptsDir, errno, strerror(errno));
-                            return errno;
-                        }
-                        else
-                        {
-                            /* create a symlink to ourselves as the executable we just moved */
-                            const char * execPath = getPathToSelf();
-
-                            if ( symlink( execPath, installPath ) != 0 )
+                            if ( rename( installPath, targetPath ) != 0 )
                             {
-                                fprintf( stderr, "err: unable to symlink \'%s\' to \'%s\' (%d: %s)\n",
-                                         installPath, execPath, errno, strerror(errno));
-                                return errno;
+                                result = reportErrno( "failed to move \'%s\' to \'%s\'", installPath, scriptsDir );
                             }
                             else
                             {
-                                fprintf( stderr, "Installed \'%s\' to \'%s\' successfully.\n"
-                                                 "The script directory can be found at \'%s\'\n",
-                                         execPath, installPath, scriptsDir );
+                                /* create a symlink to ourselves to pretend to be the executable we just moved */
+                                const char * execPath = getPathToSelf();
+                                if ( execPath != NULL )
+                                {
+                                    if ( symlink( execPath, installPath ) != 0 )
+                                    {
+                                        result = reportErrno( "unable to symlink \'%s\' to \'%s\'", installPath, execPath );
+                                    }
+                                    else
+                                    {
+                                        printf( "Successfully Installed \'%s\' to \'%s\'.\n"
+                                                "The script directory can be found at \'%s\'\n",
+                                                execPath, installPath, scriptsDir );
+                                    }
+                                    free((void *)execPath );
+                                }
                             }
-                            free( (void *)execPath );
+                            free( targetPath );
                         }
-                        free( scriptsDest );
                     }
+                    break;
                 }
-                free( scriptsDir );
-                free( installPath );
+                free((void *)scriptsDir );
             }
-            free( (void *)installDir );
+            free((void *)filename );
         }
-        free( (void *)installName );
+        free((void *)installPath );
     }
-    /* we probably should free installPath, scriptsPath and execPath,
-     * but it's a little complicated, and we're about to quit anyhow */
 
     return result;
 }
@@ -265,14 +505,16 @@ int launch( char * argv[], char * envp[] )
     int result = 0;
     int status;
 
-    /* `vfork()` is slightly more efficient than `fork()` for this common scenario, where the child
-     * immediately calls one of the variants of `execve()`, as it doesn't bother creating a copy of
-     * the page tables, only to blow them away immediately by calling `execve()` */
+    /* `vfork()` is slightly more efficient than `fork()` for this common scenario,
+     * where the child immediately calls one of the variants of `execve()`, so it
+     * doesn't need to create a copy of the page tables, only to blow them away
+     * immediately by calling `execve()`
+     */
     int pid = vfork();
     switch ( pid )
     {
     case -1: /* fork failed */
-        syslog( LOG_ERR, "err: unable to launch \'%s\' (%d: %s)", argv[0], errno, strerror(errno) );
+        syslog( LOG_ERR, "err: unable to launch \'%s\'", argv[0] );
         result = errno;
         break;
 
@@ -292,8 +534,9 @@ int launch( char * argv[], char * envp[] )
 }
 
 typedef struct sExecutable {
-    struct sExecutable * next;
-    char                 path[1];
+    struct sExecutable *  next;
+    unsigned short        nameOffset;
+    char                  path[1];
 } tExecutable;
 
 tExecutable * executableHead;
@@ -310,7 +553,7 @@ int forEachEntry( const char * path, const struct stat *info, int entryType, str
 {
     int result = FTW_CONTINUE;
 
-    // fprintf( stderr, "level: %d, path: %s\n",  ftw->level, path );
+    // reportErrno("level: %d, path: %s\n",  ftw->level, path );
     switch (entryType)
     {
     case FTW_D:
@@ -332,13 +575,19 @@ int forEachEntry( const char * path, const struct stat *info, int entryType, str
             if ( executable != NULL )
             {
                 memcpy( executable->path, path, pathLen );
+                char * name = strrchr( path, '/' );
+                if ( name != NULL )
+                {
+                    executable->nameOffset = name - path + 1;
+                }
                 tExecutable ** prev = &executableHead;
-                tExecutable * exct = executableHead;
+                tExecutable *  exct = executableHead;
                 while ( exct != NULL )
                 {
-                    if ( strcoll(executable->path, exct->path) < 0 )
+                    if ( strcoll( &executable->path[ executable->nameOffset ],
+                                  &exct->path[ exct->nameOffset ] ) < 0 )
                     {
-                        /* insewrt the new entry before this one */
+                        /* insert the new entry before this one */
                         break;
                     }
                     prev = &exct->next;
@@ -367,51 +616,55 @@ int invoke( char * argv[], char * envp[] )
 {
     int result = 0;
 
-    fprintf( stderr, "    argv[0]: %s\n", argv[0] );
+    // debugf("    argv[0]: %s\n", argv[0] );
 
-    const char * installName = basenamedup( argv[0]);
-    const char * installDir = dirnamedup( argv[0] );
-    if ( installName != NULL && installDir != NULL)
+    const char * installPath = absolutePath( argv[0] );
+    if ( installPath != NULL )
     {
-        char * scriptsDir;
-        if ( asprintf( &scriptsDir, "%s/.%s.d", installDir, installName ) < 0 )
+        const char * scriptsDir = getScriptsDir( installPath );
+        if ( scriptsDir != NULL )
         {
-            fprintf( stderr, "err: unable to build path to the scripts directory \'%s\' (%d: %s)\n",
-                     scriptsDir, errno, strerror( errno ) );
-        }
-        else if ( scriptsDir != NULL )
-        {
-            fprintf( stderr, "    argv[0]: %s\ninstallName: %s\n installDir: %s\n scriptsDir: %s\n",
-                     argv[0], installName, installDir, scriptsDir );
-
-            executableHead = NULL;
-
-            nftw( scriptsDir, forEachEntry, 2, FTW_ACTIONRETVAL );
-
-            tExecutable * executable = executableHead;
-            while ( executable != NULL)
+            const char * commonDir = getCommonDir( installPath );
+            if (commonDir != NULL )
             {
-                argv[0] = executable->path;
-                fprintf( stderr, "launch %s\n", argv[0] );
-                int res = launch( argv, envp );
-                if ( result == 0 && res != 0 )
+#if 0
+                debugf( "     argv[0]: %s\n"
+                        " installPath: %s\n"
+                        "  scriptsDir: %s\n"
+                        "   commonDir: %s\n",
+                        argv[0], installPath, scriptsDir, commonDir );
+#endif
+                executableHead = NULL;
+
+                nftw( scriptsDir, forEachEntry, 2, FTW_ACTIONRETVAL );
+                nftw( commonDir,  forEachEntry, 2, FTW_ACTIONRETVAL );
+
+                tExecutable * executable = executableHead;
+                while ( executable != NULL)
                 {
-                    result = res;
+                    argv[0] = executable->path;
+                    // debugf( "launch %s", argv[0] );
+                    int res = launch( argv, envp );
+                    if ( result == 0 && res != 0 )
+                    {
+                        result = res;
+                    }
+
+                    /* done with this one, so free it */
+                    tExecutable * f = executable;
+                    executable = executable->next;
+                    free( f );
                 }
 
-                /* done with this one, so free it */
-                tExecutable *f = executable;
-                executable = executable->next;
-                free( f );
+                executableHead = NULL;
+
+                free( (void *)commonDir );
             }
-
-            executableHead = NULL;
-
-            free( scriptsDir );
+            free( (void *)scriptsDir );
         }
-        free( (void *)installDir );
-        free( (void *)installName );
+        free( (void *)installPath );
     }
+
     return result;
 }
 
