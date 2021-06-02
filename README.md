@@ -3,30 +3,45 @@
 An executable that transparently impersonates another, so that it becomes a 'hook' to execute
 additional executables each time it is invoked.
 
-It does this by moving the target executable into a new subsirectory, and putting a symlink to
-this executable in the orginal location. When this executable is invoked through the symlink, 
-it scans the subdirectory and executes any executable files it finds in it.
+It does this by moving the target executable into a new subdirectory, and replacing it with
+a synlink to `Cuckoo`. When the symlink is executed, `cuckoo` is executed instead and
+passed the parameters intended for the original executable it replaced. It then invokes
+every executable it finds in the subdirectory.
 
 For example, if we had a target executable called `foobar`, executing `cuckoo foobar` would
-create the subdirectory in the current working directory called `.foobar.d`, and moves `foobar`
-into it, also renaming it to `00-foobar` so it executes first (executable files in the subdir
-are executed in alphabetical order). Then cuckoo creates a symlink `foobar` that points to this
-cuckoo executable (e.g. `foobar` -> `/usr/bin/cuckoo`).
+create the subdirectory called `.foobar.d` in the same directory as `foobar`, then renames
+`foobar` to `50-foobar` and moves it into the subdirectory. Since the subdirectory's contents
+are executed in alphabetical order, naming it `50-foobar` leaves room for other executables
+before it and after. Then `Cuckoo` creates a symlink `foobar` that points to this executable
+(i.e. `foobar` -> `/usr/bin/cuckoo`).
 
 If another process then executes the symlink that's impersonating `foobar`, then `/usr/bin/cuckoo`
-is executed with the parameters the process provided. `cuckoo` then scans `.foobar.d` in alphabetical
-order and executes any excutable files it finds, passing them the same parameters and environment
-that the symlink was passed. Cuckoo will always attempt to execute all the executables it finds,
-and will remember the first non-zero exit code it recieves, and will return that as its exit
-status.
+is executed with the parameters the process provided. `Cuckoo` then scans `.foobar.d` in
+alphabetical order and executes any executable files it finds, passing them the same parameters
+and environment that the symlink was passed. Cuckoo will always attempt to execute all the
+executables it finds, and will remember the first non-zero exit code it receives, and will
+return that as its exit status.
+
+In addition to the subdirectory created when installing the intercept - `.foobar.d/` in
+the example above - the directory `/etc/cuckoo/foobar`would also be scanned and combined
+with it, Then the combination is sorted before being executed in alphabetical order.
+
+This is useful in the case where auto-updates happen. This is the case when intercepting
+comskip at `/usr/share/channels-dvr/latest` for [Channels DVR](https://getchannels.com/plus/#dvr). 
+When Channels DVR updates itself, it downloads the new version into another directory,
+and updates `/usr/share/channels-dvr/latest` (which is a symbolic link) to point to the
+new downloaded version. The problem for Cuckoo is that will 'unhook' the previous Cuckoo
+install. To work around this, a cron job can execute the install step, and the extra
+scripts can be put into `/etc/cuckoo/comskip`, so they won't be 'left behind' when
+Channels DVR updates itself.
 
 ## The Motivation
 
 The 'itch' that this scratches was a lack of a hook in Channels DVR to execute additional
-user-specified post-processing when a recording completes.
+post-processing specified by a user when a recording completes.
 
-If you want to stay in the Channels ecosystem (and there's nothing wrong with that) you really don't
-need to post-process the recordings.
+This isn't a serious omission if you want to stay entirely in the Channels ecosystem (and
+there's nothing wrong with that), you really don't need to post-process the recordings.
 
 However, I use Channels DVR as an (excellent!) DVR to record television for Plex.
 In my opinion, Channels DVR is far better than the one built into Plex itself.
@@ -37,24 +52,20 @@ some software skills, I've created a few tools to help that.
 
 As part of that effort, I need to know when a recoding has completed so I can transfer the
 recording over into my Plex hierarchy while renaming them to the preferred Plex convention
-(for example. please see my DVR2Plex project).
+(for example. please see my [DVR2Plex](https://channels-dvr-goodies.github.io/DVR2Plex/) project).
 
 The Channels developers haven't yet had chance to provide a hook to trigger post-processing.
 This is understandable, since doing your own post-processing is certainly advanced usage,
 and I presume it's a limited audience that wants to do so.. It could also be a significant
-support burden for [Fancy Bits LLC](https://getchannles.com).
-They *do* support postprocessing internally e.g. doing ad detection when a recording completes.
+support burden for [Fancy Bits LLC](https://getchannles.com). Channels DVR *does* support
+postprocessing internally e.g. doing ad detection when a recording completes.
 
-My intented use is to add my own post-processing steps after comskip is invoked (which is the
-open source project that Channels DVR uses to generate the ad detection `.edl` files)
-since the number of users doing their own post-processing are very much in the minority.
+My intended use is to add my own post-processing steps after `comskip` is invoked (which is the
+open source project that Channels DVR uses to generate the ad detection `.edl` files).
 
 While I could use filesystem monitoring (via the iNotify syscall) or a FUSE filesystem, it's
 somewhat huristic to determine when the Channels DVR has finished with a recording, particularly
 with its own post-processing, like `comskip` for marking ads.
-
-This executable pretends to be comskip, and does indeed call comskip to do its thing first.
-But once comskip exits, this executable will run other executables that the user has configured.
 
 ## Why 'Cuckoo'?
 

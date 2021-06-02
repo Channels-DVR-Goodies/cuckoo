@@ -24,11 +24,6 @@
 #include <fcntl.h>
 #include <ftw.h>
 
-typedef struct {
-    char * path;
-    char * directory;
-    char * name;
-} tSplitPath;
 
 const char * usageInstructions =
 {
@@ -45,7 +40,7 @@ const char * usageInstructions =
     "  would have been invoked before these changes were made.\n"
 #endif
     "\n"
-    "More information can be found at https://paul-chambers.github.io/cuckoo\n"
+    "More information can be found at https://channels-dvr-goodies.github.io/cuckoo\n"
 };
 
 #define debugf( ... ) DebugF_( __func__, __LINE__, __VA_ARGS__ )
